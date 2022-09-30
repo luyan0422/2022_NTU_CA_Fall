@@ -51,12 +51,7 @@ main:
   jal prints				# print data
 #----------------------------------------------------Do not modify above text----------------------------------------------------
 ### Start your code here ###
-  la a4, data_o 			# data_o address
-  addi a5, a2, -2 			# a5 stores data_i rows - 2
-  addi a6, a3, -2 			# a6 stores data_i cols - 2
-  la a7, buffer 			# buffer address (store 9 number)
-  addi sp, sp, -88
-  sw ra, 80(sp) 			# save return address on stack
+  addi sp, sp, -80
   sw s11, 72(sp) 			
   sw s10, 64(sp) 			
   sw s9, 56(sp)				
@@ -66,7 +61,11 @@ main:
   sw s5, 24(sp)				
   sw s4, 16(sp) 			
   sw s3, 8(sp) 				
-  sw s2, 0(sp) 				
+  sw s2, 0(sp)
+  la a4, data_o 			# data_o address
+  addi a5, a2, -2 			# a5 stores data_i rows - 2
+  addi a6, a3, -2 			# a6 stores data_i cols - 2
+  la a7, buffer 			# buffer address (store 9 number)			
   li s2, 1				# for(i = 1)
 mainforloop1:
   bgt s2, a5, maintexit1		# if ( i > row - 2) jump to maintexit1
@@ -159,9 +158,8 @@ maintexit1:
   lw s9, 56(sp)
   lw s10, 64(sp)
   lw s11, 72(sp)
-  lw ra, 80(sp)
-  addi sp, sp, 88
-  jr ra
+  addi sp, sp, 80
+ 
 #----------------------------------------------------Do not modify below text----------------------------------------------------
 ends:
   # Print str4
