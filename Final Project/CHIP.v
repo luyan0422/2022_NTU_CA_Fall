@@ -28,10 +28,10 @@ module CHIP(clk,
     reg    [31:0] PC          ;              //
     reg   [31:0] PC_nxt      ;              //
     wire          regWrite    ;              //
-    wire   [ 4:0] rs1, rs2, rd;              //
+    reg   [ 4:0] rs1, rs2, rd;              //
     wire   [31:0] rs1_data    ;              //
     wire   [31:0] rs2_data    ;              //
-    wire   [31:0] rd_data     ;              //
+    reg   [31:0] rd_data     ;              //
     //---------------------------------------//
 
     // Todo: other wire/reg
@@ -56,7 +56,7 @@ module CHIP(clk,
     wire [31:0] InputTwo;
     // ALU control
     wire doMul;
-	wire [1:0] ALUMode;
+	wire [2:0] ALUMode;
     // ALU
     wire [31:0] ALUOut;
     wire ZeroOut;
@@ -69,10 +69,13 @@ module CHIP(clk,
     wire doBranch;
     
     
-    assign mem_addr_I = PC;
-	assign rs1 = mem_rdata_I[19:15];
-	assign rs2 = mem_rdata_I[24:20];
-	assign rd = mem_rdata_I[11:7];
+
+    assign mem_wen_D = MemWrite; // read data
+    assign mem_addr_D = rs1_data; // address
+    assign mem_wdata_D = Final; // data
+    assign mem_addr_I = PC; // add of instruction
+
+	
     //==== Submodule Connection ===================
     //---------------------------------------//
     // Do not modify this part!!!            //
@@ -98,10 +101,10 @@ module CHIP(clk,
     PC_ADDER x1imm(.DataOne(rs1_data), .DataTwo(immediate), .Outcome(x1PlusImm));
     // Control
     CONTROL Control(.Opcode(mem_rdata_I[6:0]), .Branch(Branch), .MemRead(MemRead), .MemtoReg(MemtoReg), .ALUOp(ALUOp), .MemWrite(MemWrite), .ALUSrc(ALUSrc), .regWrite(regWrite));
-    assign mem_wen_D = MemWrite;
+    
     // EX
     // ALU control
-	ALUControl ALUControl(.ALUOp(ALUOp), .Instruction(PC), .ALUMode(ALUMode),.doMul(doMul));
+	ALUControl ALUControl(.ALUOp(ALUOp), .Instruction(mem_rdata_I), .ALUMode(ALUMode),.doMul(doMul));
     MUX aluInput(.OptionOne(rs2_data), .OptionTwo(immediate), .SelectWire(ALUSrc), .Outcome(InputTwo));     //ALUSrc 0: rs2_data, 1: immediate
     ALU ALU(.InputOne(rs1_data), .InputTwo(InputTwo), .Mode(ALUMode), .ALUOut(ALUOut), .ZeroOut(Zreo));
     mulDiv mulDiv(.clk(clk), .rst_n(rst_n), .valid(doMul), .ready(mulReady), .in_A(rs1_data), .in_B(InputTwo), .out(MULOut));
@@ -109,6 +112,12 @@ module CHIP(clk,
 
     // BEQ
     AND branchDetect(.InputOne(Branch), .InputTwo(ZeroOut), .Outcome(doBranch));
+    // ME
+    //MUX PostALU(.OptionOne(0), .OptionTwo(rs2_data), .SelectWire(MemWrite), .Outcome(mem_wdata_D));     // MemWrite 0: dont write, 1: new memory data
+	//MUX DataAddr(.OptionOne(0), .OptionTwo(rs1_data + immediate), .SelectWire(MemWrite), .Outcome(mem_addr_D));   // MemWrite 0: dont write, 1: new memory address
+    //memory LOAD_STORE(.clk(clk), .rst_n(rst_n), .wen(MemWrite), .a(rd_data), .d(rs1_data), .q(dataOutput), .offset(immediate));
+    //memory STORE(.clk(clk), .rst_n(rst_n), .wen(MemWrite), .a(rd_data), .d(rs1_data), .q(dataOutput), .offset(immediate));
+	
 
     //==== Combinational Part =====================
     // Todo: any combinational/sequential circuit
@@ -140,20 +149,20 @@ module CHIP(clk,
             // JALR
             else if (pcNextState == 2'd2)begin
                 PC_nxt = x1PlusImm;
+                //rd_data = pcPlus4;
             end
             else begin
-                PC_nxt = PC;
+                PC_nxt = pcPlus4;
             end
         end 
     end
 
-    // ME
-    MUX PostALU(.OptionOne(0), .OptionTwo(rs2_data), .SelectWire(MemWrite), .Outcome(mem_wdata_D));     // MemWrite 0: dont write, 1: new memory data
-	MUX DataAddr(.OptionOne(0), .OptionTwo(rs1_data + immediate), .SelectWire(MemWrite), .Outcome(mem_addr_D));   // MemWrite 0: dont write, 1: new memory address
-
-	// WB
-	MUX WB(.OptionOne(mem_rdata_D), .OptionTwo(Final), .SelectWire(MemtoReg), .Outcome(rd_data));   // MemtoReg 0: memory data, 1: Final output,
-
+    always @(mem_rdata_I)begin
+        rs1 = mem_rdata_I[19:15];
+	    rs2 = mem_rdata_I[24:20];
+	    rd = mem_rdata_I[11:7];
+        rd_data = (mem_rdata_I[6:0] == 7'b1101111 || mem_rdata_I[6:0] == 7'b1100111) ?  PC + 32'd4 : (MemtoReg == 1) ? mem_rdata_D : Final;
+    end
 
     //==== Sequential Part ========================
     always @(posedge clk or negedge rst_n) begin
@@ -165,6 +174,8 @@ module CHIP(clk,
             PC <= PC_nxt;
         end
     end
+    
+    
 
 endmodule
 
@@ -189,7 +200,7 @@ module CONTROL(Opcode, Branch, MemRead, MemtoReg, ALUOp, MemWrite, ALUSrc, regWr
     // ALUArc -> 0: reg, 1: immediate
     always@(*) begin
 		case(Opcode)
-            // ALIPC
+            // AUIPC
             7'b0010111: begin
 				//auipc
 				Branch = 0;
@@ -449,17 +460,23 @@ endmodule
 
 module ALUControl(ALUOp, Instruction, ALUMode, doMul);  //depend on Control's wire ALUOp 
     // ALUOp -> 00: auipc/sw/lw/J-type, 01: beq, 10: R-type, 11: addi/slti
-    // ALUMode -> 0: add, 1: sub, 2: mul, 3: xor
+    // ALUMode -> 0: add, 1: sub, 2: mul, 3: xor 4: ignore(for sw & lw)
     input [1:0] ALUOp;
     input [31:0] Instruction;
-    output [1:0] ALUMode; 
+    output [2:0] ALUMode; 
     output doMul;
-    reg [1:0] ALUMode;
+    reg [2:0] ALUMode;
 	reg doMul;
     always @(*)begin
         case(ALUOp)
-            2'b00:begin 
-                ALUMode = 0; //auipc/sw/lw/J-type
+            //auipc/sw/lw/J-type
+            2'b00:begin
+                if(Instruction[6:0] == 7'b0000011 && Instruction[14:12] == 3'b010) //lw
+                    ALUMode = 4;  
+                else if(Instruction[6:0] == 7'b0100011 && Instruction[14:12] == 3'b010) //sw
+                    ALUMode = 4;
+                else
+                    ALUMode = 0;
             end
             2'b01:begin
                 ALUMode = 1; //sub
@@ -510,17 +527,18 @@ endmodule
 module ALU(InputOne, InputTwo, Mode, ALUOut, ZeroOut);
     input [31:0] InputOne;
     input [31:0] InputTwo;
-    input [1:0] Mode;
+    input [2:0] Mode;
     output ZeroOut; // for BEQ
     output [31:0] ALUOut;
     
     reg ZeroOut;
     reg [31:0] tmp;
 
-    parameter ADD = 2'd0;
-    parameter SUB = 2'd1;
-    parameter MUL  = 2'd2;
-    parameter XOR  = 2'd3;
+    parameter ADD = 3'd0;
+    parameter SUB = 3'd1;
+    parameter MUL  = 3'd2;
+    parameter XOR  = 3'd3;
+    parameter IGNORE  = 3'd4;
 
     assign ALUOut = tmp;
 
@@ -529,6 +547,7 @@ module ALU(InputOne, InputTwo, Mode, ALUOut, ZeroOut);
             ADD: tmp = InputOne + InputTwo;
             SUB: tmp = InputOne - InputTwo;
             XOR: tmp = InputOne ^ InputTwo;
+            IGNORE: tmp = InputOne;
             default: tmp = 32'b0;
         endcase
         if(tmp == 32'b0) ZeroOut = 1;
