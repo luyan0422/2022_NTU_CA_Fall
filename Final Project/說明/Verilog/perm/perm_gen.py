@@ -6,8 +6,8 @@ def perm(n,r):
 
 if __name__ == '__main__':
     # Modify your test pattern here
-    n = 10
-    r = 3
+    n = 8
+    r = 5
 
     with open('perm_data.txt', 'w') as f_data:
         f_data.write('{:0>8x}\n'.format(n))

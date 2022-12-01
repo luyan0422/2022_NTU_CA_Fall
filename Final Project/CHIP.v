@@ -26,12 +26,12 @@ module CHIP(clk,
     // Do not modify this part!!!            //
     // Exception: You may change wire to reg //
     reg    [31:0] PC          ;              //
-    reg   [31:0] PC_nxt      ;              //
+    reg    [31:0] PC_nxt      ;              //
     wire          regWrite    ;              //
-    reg   [ 4:0] rs1, rs2, rd;              //
+    wire   [ 4:0] rs1, rs2, rd;              //
     wire   [31:0] rs1_data    ;              //
     wire   [31:0] rs2_data    ;              //
-    reg   [31:0] rd_data     ;              //
+    wire   [31:0] rd_data     ;              //
     //---------------------------------------//
 
     // Todo: other wire/reg
@@ -40,23 +40,23 @@ module CHIP(clk,
     // PC
     wire [1:0] pcNextState; //0: normal 1: pc+imm 2: x1+imm
     // normal PC (PC+4)
-	wire [31:0] pcPlus4;
-	// Branch/JAL/AUIPC  (PC + immediate)
-	wire [31:0] pcPlusImm;
+    wire [31:0] pcPlus4;
+    // Branch/JAL/AUIPC  (PC + immediate)
+    wire [31:0] pcPlusImm;
     // JALR (x1+immediate)
     wire [31:0] x1PlusImm;
     // Control (regWrite already claimed)
     wire Branch;
     wire MemRead;
-    wire MemtoReg;
+    wire [1:0]MemtoReg;
     wire [1:0] ALUOp; //-> connect to ALU control
-	wire MemWrite;
-	wire ALUSrc;
+    wire MemWrite;
+    wire ALUSrc;
     // Mux decide ALU 的 input
     wire [31:0] InputTwo;
     // ALU control
     wire doMul;
-	wire [2:0] ALUMode;
+    wire [2:0] ALUMode;
     // ALU
     wire [31:0] ALUOut;
     wire ZeroOut;
@@ -67,15 +67,13 @@ module CHIP(clk,
     wire [31:0] Final;
     // BEQ
     wire doBranch;
+    // ReadData
+    wire [31:0] DataRead;
     
-    
-
-    assign mem_wen_D = MemWrite; // read data
-    assign mem_addr_D = rs1_data; // address
-    assign mem_wdata_D = Final; // data
-    assign mem_addr_I = PC; // add of instruction
-
-	
+    assign mem_addr_I = PC;
+    assign rs1 = mem_rdata_I[19:15];
+    assign rs2 = mem_rdata_I[24:20];
+    assign rd = mem_rdata_I[11:7];
     //==== Submodule Connection ===================
     //---------------------------------------//
     // Do not modify this part!!!            //
@@ -94,34 +92,30 @@ module CHIP(clk,
     // Todo: other submodules
 
     // ID
-	IMM_GEN imm_Gen(.Instruction(mem_rdata_I), .Immediate(immediate), .pcNextState(pcNextState)); //check instruction and pc_nxt
+    IMM_GEN imm_Gen(.Instruction(mem_rdata_I), .Immediate(immediate), .pcNextState(pcNextState)); //check instruction and pc_nxt
     // PC related
     PC_ADDER normalpc(.DataOne(32'd4), .DataTwo(PC), .Outcome(pcPlus4));
     PC_ADDER pcimm(.DataOne(PC), .DataTwo(immediate), .Outcome(pcPlusImm));
     PC_ADDER x1imm(.DataOne(rs1_data), .DataTwo(immediate), .Outcome(x1PlusImm));
     // Control
     CONTROL Control(.Opcode(mem_rdata_I[6:0]), .Branch(Branch), .MemRead(MemRead), .MemtoReg(MemtoReg), .ALUOp(ALUOp), .MemWrite(MemWrite), .ALUSrc(ALUSrc), .regWrite(regWrite));
-    
+    assign mem_wen_D = MemWrite;
     // EX
     // ALU control
-	ALUControl ALUControl(.ALUOp(ALUOp), .Instruction(mem_rdata_I), .ALUMode(ALUMode),.doMul(doMul));
+    ALUControl ALUControl(.ALUOp(ALUOp), .Instruction(mem_rdata_I), .ALUMode(ALUMode),.doMul(doMul));
     MUX aluInput(.OptionOne(rs2_data), .OptionTwo(immediate), .SelectWire(ALUSrc), .Outcome(InputTwo));     //ALUSrc 0: rs2_data, 1: immediate
-    ALU ALU(.InputOne(rs1_data), .InputTwo(InputTwo), .Mode(ALUMode), .ALUOut(ALUOut), .ZeroOut(Zreo));
-    mulDiv mulDiv(.clk(clk), .rst_n(rst_n), .valid(doMul), .ready(mulReady), .in_A(rs1_data), .in_B(InputTwo), .out(MULOut));
-    MUX aluOutDetermine(.OptionOne(ALUOut), .OptionTwo(MULOut[63:32]), .SelectWire(doMul), .Outcome(Final));  // doMul 0: ALUOut, 1: MULOut
+    ALU ALU(.InputOne(rs1_data), .InputTwo(InputTwo), .Mode(ALUMode), .ALUOut(ALUOut), .ZeroOut(ZeroOut));
+    mulDiv mulDiv(.clk(clk), .rst_n(rst_n), .valid(doMul), .ready(mulReady), .in_A(rs1_data), .in_B(rs2_data), .out(MULOut));
+    MUX aluOutDetermine(.OptionOne(ALUOut), .OptionTwo(MULOut[31:0]), .SelectWire(doMul), .Outcome(Final));  // doMul 0: ALUOut, 1: MULOut
 
     // BEQ
-    AND branchDetect(.InputOne(Branch), .InputTwo(ZeroOut), .Outcome(doBranch));
-    // ME
-    //MUX PostALU(.OptionOne(0), .OptionTwo(rs2_data), .SelectWire(MemWrite), .Outcome(mem_wdata_D));     // MemWrite 0: dont write, 1: new memory data
-	//MUX DataAddr(.OptionOne(0), .OptionTwo(rs1_data + immediate), .SelectWire(MemWrite), .Outcome(mem_addr_D));   // MemWrite 0: dont write, 1: new memory address
-    //memory LOAD_STORE(.clk(clk), .rst_n(rst_n), .wen(MemWrite), .a(rd_data), .d(rs1_data), .q(dataOutput), .offset(immediate));
-    //memory STORE(.clk(clk), .rst_n(rst_n), .wen(MemWrite), .a(rd_data), .d(rs1_data), .q(dataOutput), .offset(immediate));
-	
+    //AND branchDetect(.InputOne(Branch), .InputTwo(ZeroOut), .Outcome(doBranch));
+    assign doBranch = (Branch && ZeroOut)? 1'b1:1'b0;
+    
 
     //==== Combinational Part =====================
     // Todo: any combinational/sequential circuit
-    always @(pcPlus4 or pcPlusImm or x1PlusImm or PC or pcNextState)begin
+    always @(*)begin
         // if MUL stall
         if(doMul == 1'b1) begin
             if(mulReady == 1'b1)begin
@@ -133,13 +127,13 @@ module CHIP(clk,
         end
         // rest
         else begin
-            // noemal PC
+            // normal PC
             if (pcNextState == 2'd0)begin
                 PC_nxt = pcPlus4;
             end
-            // might be AUIPC/JAL/BEQ
+            // might be BEQ
             else if(pcNextState == 2'd1)begin
-                if (doBranch == 1'd1) begin
+                if (doBranch == 1'b1) begin
                     PC_nxt = pcPlusImm;
                 end
                 else begin
@@ -149,7 +143,9 @@ module CHIP(clk,
             // JALR
             else if (pcNextState == 2'd2)begin
                 PC_nxt = x1PlusImm;
-                //rd_data = pcPlus4;
+            end
+            else if (pcNextState == 2'd3)begin
+                PC_nxt = pcPlusImm;
             end
             else begin
                 PC_nxt = pcPlus4;
@@ -157,26 +153,23 @@ module CHIP(clk,
         end 
     end
 
-    always @(mem_rdata_I)begin
-        rs1 = mem_rdata_I[19:15];
-	    rs2 = mem_rdata_I[24:20];
-	    rd = mem_rdata_I[11:7];
-        rd_data = (mem_rdata_I[6:0] == 7'b1101111 || mem_rdata_I[6:0] == 7'b1100111) ?  PC + 32'd4 : (MemtoReg == 1) ? mem_rdata_D : Final;
-    end
+    // ME
+    MUX PostALU(.OptionOne(0), .OptionTwo(rs2_data), .SelectWire(MemWrite), .Outcome(mem_wdata_D));     // MemWrite 0: dont write, 1: new memory data
+    MUX DataAddr(.OptionOne(0), .OptionTwo(Final), .SelectWire(MemWrite||MemRead), .Outcome(mem_addr_D));   // MemWrite 0: dont write, 1: new memory address
+    MUX ReadData(.OptionOne(0), .OptionTwo(mem_rdata_D), .SelectWire(MemRead), .Outcome(DataRead));// MemRead 0: don't read, 1: read data from mem
+    // WB
+    MUX2 WB(.OptionOne(Final), .OptionTwo(DataRead),.OptionThree(pcPlus4),.OptionFour(pcPlusImm),.SelectWire(MemtoReg), .Outcome(rd_data));   // MemtoReg 0:final output, 1: read mem,2:pcPlus4 ,3:pcPlusImm
+
 
     //==== Sequential Part ========================
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             PC <= 32'h00400000; // Do not modify this value!!!
-            
         end
         else begin
             PC <= PC_nxt;
         end
     end
-    
-    
-
 endmodule
 
 module PC_ADDER(DataOne, DataTwo, Outcome);
@@ -185,113 +178,114 @@ module PC_ADDER(DataOne, DataTwo, Outcome);
     output [31:0] Outcome;
     reg signed [31:0] Outcome;
 
-    always @(DataOne or DataTwo)begin
+    always @(*)begin
         Outcome = DataOne + DataTwo;
     end
 endmodule
 
 module CONTROL(Opcode, Branch, MemRead, MemtoReg, ALUOp, MemWrite, ALUSrc, regWrite);
     input [6:0] Opcode;
-	output Branch, MemRead, MemtoReg, MemWrite, ALUSrc, regWrite;
-	output [1:0] ALUOp;
-	reg Branch, MemRead, MemtoReg, MemWrite, ALUSrc, regWrite;
-	reg [1:0] ALUOp;
+    output Branch, MemRead, MemWrite, ALUSrc, regWrite;
+    output [1:0] ALUOp,MemtoReg;
+    reg Branch, MemRead, MemWrite, ALUSrc, regWrite;
+    reg [1:0] ALUOp,MemtoReg;
     // ALUOp -> 00: auipc/sw/lw/J-type, 01: beq, 10: R-type, 11: addi/slti
-    // ALUArc -> 0: reg, 1: immediate
+    // ALUSrc -> 0: reg, 1: immediate
+    // MemtoReg -> 00:aluout, 01:read_data, 10:pc+4, 11:pc+imm
     always@(*) begin
-		case(Opcode)
+        case(Opcode)
             // AUIPC
             7'b0010111: begin
-				//auipc
-				Branch = 0;
-				MemRead = 0;
-				MemtoReg = 0;
-				ALUOp = 0;      
-				MemWrite = 0;
-				ALUSrc = 1;
-				regWrite = 1; 
-			end
-			// JAL
+                //auipc
+                Branch = 0;
+                MemRead = 0;
+                MemtoReg = 2'b11;
+                ALUOp = 2'b00;      
+                MemWrite = 0;
+                ALUSrc = 1;
+                regWrite = 1; //rd 存 pc+imm
+            end
+            // JAL
             7'b1101111: begin
-				Branch = 0;
-				MemRead = 0;
-				MemtoReg = 0;
-				ALUOp = 0;
-				MemWrite = 0;
-				ALUSrc = 1;
-				regWrite = 1;       // rd 存 pc+4
-			end
+                Branch = 0;
+                MemRead = 0;
+                MemtoReg = 2'b10;
+                ALUOp = 2'b00;
+                MemWrite = 0;
+                ALUSrc = 1;
+                regWrite = 1;       // rd 存 pc+4
+            end
             // JALR
-			7'b1100111: begin
-				Branch = 0;
-				MemRead = 0;
-				MemtoReg = 0;
-				ALUOp = 0;
-				MemWrite = 0;
-				ALUSrc = 1;
-				regWrite = 1;       // rd 存 pc+4 
-			end
+            7'b1100111: begin
+                Branch = 0;
+                MemRead = 0;
+                MemtoReg = 2'b10;
+                ALUOp = 2'b00;
+                MemWrite = 0;
+                ALUSrc = 1;
+                regWrite = 1;       // rd 存 pc+4 
+            end
             // BEQ
-			7'b1100011: begin
-				Branch = 1;
-				MemRead = 0;
-				MemtoReg = 0;
-				ALUOp = 1;
-				MemWrite = 0;
-				ALUSrc = 0;
-				regWrite = 0;
-			end
+            7'b1100011: begin
+                Branch = 1;
+                MemRead = 0;
+                MemtoReg = 0;
+                ALUOp = 2'b01;
+                MemWrite = 0;
+                ALUSrc = 0;
+                regWrite = 0;
+            end
             // LW
-			7'b0000011: begin
-				Branch = 0;
-				MemRead = 1;
-				MemtoReg = 1;
-				ALUOp = 0;
-				MemWrite = 0;
-				ALUSrc = 1;
-				regWrite = 1;
-			end
+            7'b0000011: begin
+                Branch = 0;
+                MemRead = 1;
+                MemtoReg =2'b01;
+                ALUOp = 2'b00;
+                MemWrite = 0;
+                ALUSrc = 1;
+                regWrite = 1;
+            end
             // SW
-			7'b0100011: begin
-				Branch = 0;
-				MemRead = 0;
-				MemtoReg = 0;
-				ALUOp = 0;
-				MemWrite = 1;
-				ALUSrc = 1;
-				regWrite = 0;
-			end
+            7'b0100011: begin
+                Branch = 0;
+                MemRead = 0;
+                MemtoReg = 0;
+                ALUOp = 2'b00;
+                MemWrite = 1;
+                ALUSrc = 1;
+                regWrite = 0;
+            end
             // ADDI & SLTI
-			7'b0010011: begin
-				Branch = 0;
-				MemRead = 0;
-				MemtoReg = 0;
-				ALUOp = 3;
-				MemWrite = 0;
-				ALUSrc = 1;
-				regWrite = 1;
-			end
+            7'b0010011: begin
+                Branch = 0;
+                MemRead = 0;
+                MemtoReg = 0;
+                ALUOp = 2'b11;
+                MemWrite = 0;
+                ALUSrc = 1;
+                regWrite = 1;
+            end
             // R-type (ADD, SUB, XOR, MUL)
-			7'b0110011: begin
-				Branch = 0;
-				MemRead = 0;
-				MemtoReg = 0;
-				ALUOp = 2;
-				MemWrite = 0;
-				ALUSrc = 0;
-				regWrite = 1;
-			end
-			default: begin
-				Branch = 0;
-				MemRead = 0;
-				MemtoReg = 0;
-				ALUOp = 0;
-				MemWrite = 0;
-				ALUSrc = 0;
-				regWrite = 0;
-			end
-		endcase
-	end
+            7'b0110011: begin
+                Branch = 0;
+                MemRead = 0;
+                MemtoReg = 0;
+                ALUOp = 2'b10;
+                MemWrite = 0;
+                ALUSrc = 0;
+                regWrite = 1;
+            end
+            default: begin
+                Branch = 0;
+                MemRead = 0;
+                MemtoReg = 0;
+                ALUOp = 0;
+                MemWrite = 0;
+                ALUSrc = 0;
+                regWrite = 0;
+            end
+        endcase
+    end
 endmodule
 // wen(regWrite),.a1(rs1),.a2(rs2),.aw(rd),.d(rd_data),.q1(rs1_data),.q2(rs2_data);   
 module reg_file(clk, rst_n, wen, a1, a2, aw, d, q1, q2);
@@ -345,13 +339,13 @@ module IMM_GEN(Instruction, Immediate, pcNextState);
     reg [1:0] pcNextState;
     //when new IC comein
     
-    always @(Instruction) begin
-        Immediate[31:0] = 32'b0;
+    always @(*) begin
+        Immediate[31:0] = 32'b00000000000000000000000000000000;
         // AUIPC
         if(Instruction[6:0] == 7'b0010111) begin
-            Immediate[11:0] = 12'b0;
+            Immediate[11:0] = 12'b000000000000;
             Immediate[31:12] = Instruction[31:12];
-            pcNextState = 2'd1;
+            pcNextState = 2'd0;
         end
         // JAL
         else if(Instruction[6:0] == 7'b1101111) begin
@@ -362,22 +356,22 @@ module IMM_GEN(Instruction, Immediate, pcNextState);
             Immediate[20] = Instruction[31];
             //signed extension
             if(Immediate[20] == 1'b1) begin
-                Immediate[31:21] = 11'b1;
+                Immediate[31:21] = 11'b11111111111;
             end
             else if(Immediate[20] == 1'b0) begin
-                Immediate[31:21] = 11'b0;
+                Immediate[31:21] = 11'b00000000000;
             end
-            pcNextState = 2'd1;
+            pcNextState = 2'd3;
         end
         // JALR
         else if(Instruction[6:0] == 7'b1100111) begin
             Immediate[11:0] = Instruction[31:20];
             //signed extension
             if(Immediate[11] == 1'b1) begin
-                Immediate[31:12] = 20'b1;
+                Immediate[31:12] = 20'b11111111111111111111;
             end
             else if(Immediate[11] == 1'b0)begin
-                Immediate[31:12] = 20'b0;
+                Immediate[31:12] = 20'b00000000000000000000;
             end
             pcNextState = 2'd2;
         end
@@ -390,10 +384,10 @@ module IMM_GEN(Instruction, Immediate, pcNextState);
             Immediate[12] = Instruction[31];
             //signed extension
             if(Immediate[12] == 1'b1) begin
-                Immediate[31:13] = 19'b1;
+                Immediate[31:13] = 19'b1111111111111111111;
             end
             else if(Immediate[12] == 1'b0)begin
-                Immediate[31:13] = 19'b0;
+                Immediate[31:13] = 19'b0000000000000000000;
             end
             pcNextState = 2'd1;
         end
@@ -402,10 +396,10 @@ module IMM_GEN(Instruction, Immediate, pcNextState);
             Immediate[11:0] = Instruction[31:20];
             //signed extension
             if(Immediate[11] == 1'b1) begin
-                Immediate[31:12] = 20'b1;
+                Immediate[31:12] = 20'b11111111111111111111;
             end
             else if(Immediate[11] == 1'b0)begin
-                Immediate[31:12] = 20'b0;
+                Immediate[31:12] = 20'b00000000000000000000;
             end
             pcNextState = 2'd0;
         end
@@ -415,10 +409,10 @@ module IMM_GEN(Instruction, Immediate, pcNextState);
             Immediate[11:5] = Instruction[31:25];
             //signed extension
             if(Immediate[11] == 1'b1) begin
-                Immediate[31:12] = 20'b1;
+                Immediate[31:12] = 20'b11111111111111111111;
             end
             else if(Immediate[11] == 1'b0)begin
-                Immediate[31:12] = 20'b0;
+                Immediate[31:12] = 20'b00000000000000000000;
             end
             pcNextState = 2'd0;
         end
@@ -427,10 +421,10 @@ module IMM_GEN(Instruction, Immediate, pcNextState);
             Immediate[11:0] = Instruction[31:20];
             //signed extension
             if(Immediate[11] == 1'b1) begin
-                Immediate[31:12] = 20'b1;
+                Immediate[31:12] = 20'b11111111111111111111;
             end
             else if(Immediate[11] == 1'b0)begin
-                Immediate[31:12] = 20'b0;
+                Immediate[31:12] = 20'b00000000000000000000;
             end
             pcNextState = 2'd0;
         end
@@ -439,20 +433,20 @@ module IMM_GEN(Instruction, Immediate, pcNextState);
             Immediate[11:0] = Instruction[31:20];
             //signed extension
             if(Immediate[11] == 1'b1) begin
-                Immediate[31:12] = 20'b1;
+                Immediate[31:12] = 20'b11111111111111111111;
             end
             else if(Immediate[11] == 1'b0)begin
-                Immediate[31:12] = 20'b0;
+                Immediate[31:12] = 20'b00000000000000000000;
             end
             pcNextState = 2'd0;
         end
         // ADD & SUB & XOR & MUL
         else if(Instruction[6:0] == 7'b0110011)begin
-            Immediate[31:0] = 32'b0;
+            Immediate[31:0] = 32'b00000000000000000000000000000000;
             pcNextState = 2'd0;
         end
         else begin
-            Immediate[31:0] = 32'b0;
+            Immediate[31:0] = 32'b00000000000000000000000000000000;
             pcNextState = 2'd0;
         end
     end
@@ -460,26 +454,20 @@ endmodule
 
 module ALUControl(ALUOp, Instruction, ALUMode, doMul);  //depend on Control's wire ALUOp 
     // ALUOp -> 00: auipc/sw/lw/J-type, 01: beq, 10: R-type, 11: addi/slti
-    // ALUMode -> 0: add, 1: sub, 2: mul, 3: xor 4: ignore(for sw & lw)
+    // ALUMode -> 0: add, 1: sub, 2: mul, 3: xor, 4:slti
     input [1:0] ALUOp;
     input [31:0] Instruction;
     output [2:0] ALUMode; 
     output doMul;
     reg [2:0] ALUMode;
-	reg doMul;
+    reg doMul;
     always @(*)begin
         case(ALUOp)
-            //auipc/sw/lw/J-type
-            2'b00:begin
-                if(Instruction[6:0] == 7'b0000011 && Instruction[14:12] == 3'b010) //lw
-                    ALUMode = 4;  
-                else if(Instruction[6:0] == 7'b0100011 && Instruction[14:12] == 3'b010) //sw
-                    ALUMode = 4;
-                else
-                    ALUMode = 0;
+            2'b00:begin 
+                ALUMode = 0; //auipc/sw/lw/J-type
             end
             2'b01:begin
-                ALUMode = 1; //sub
+                ALUMode = 1; //beq:sub
             end
             2'b10:begin
                 case(Instruction[14:12])
@@ -499,7 +487,7 @@ module ALUControl(ALUOp, Instruction, ALUMode, doMul);  //depend on Control's wi
             2'b11:begin
                 case(Instruction[14:12])
                     3'b000: ALUMode = 0;// ADDI
-                    3'b010: ALUMode = 1;// SLTI
+                    3'b010: ALUMode = 4;// SLTI
                     default: ALUMode = 0;
                 endcase
             end
@@ -524,6 +512,26 @@ module MUX(OptionOne, OptionTwo, SelectWire, Outcome);
     end
 endmodule
 
+module MUX2(OptionOne, OptionTwo,OptionThree,OptionFour,SelectWire, Outcome);
+    input [31:0] OptionOne;
+    input [31:0] OptionTwo;
+    input [31:0] OptionThree;
+    input [31:0] OptionFour;
+
+    input [1:0]SelectWire;
+
+    output [31:0] Outcome;
+    reg [31:0] Outcome;
+
+    always @(*)begin
+        if(SelectWire == 2'b00) Outcome = OptionOne;
+        else if(SelectWire == 2'b01) Outcome = OptionTwo;
+        else if(SelectWire == 2'b10) Outcome = OptionThree;
+        else if(SelectWire == 2'b11) Outcome = OptionFour;
+        else Outcome = 32'h00000000;
+    end
+endmodule
+
 module ALU(InputOne, InputTwo, Mode, ALUOut, ZeroOut);
     input [31:0] InputOne;
     input [31:0] InputTwo;
@@ -538,21 +546,24 @@ module ALU(InputOne, InputTwo, Mode, ALUOut, ZeroOut);
     parameter SUB = 3'd1;
     parameter MUL  = 3'd2;
     parameter XOR  = 3'd3;
-    parameter IGNORE  = 3'd4;
-
-    assign ALUOut = tmp;
+    parameter SLTI  = 3'd4;
 
     always @(*) begin
         case(Mode)
             ADD: tmp = InputOne + InputTwo;
             SUB: tmp = InputOne - InputTwo;
             XOR: tmp = InputOne ^ InputTwo;
-            IGNORE: tmp = InputOne;
-            default: tmp = 32'b0;
+            SLTI: begin
+                if( $signed(InputOne) < $signed(InputTwo)) tmp = 32'h00000001;
+                else tmp= 32'h00000000;
+            end
+            default: tmp = 32'h00000000;
         endcase
-        if(tmp == 32'b0) ZeroOut = 1;
-        else ZeroOut = 0;
+        if(tmp == 32'h00000000) ZeroOut = 1'b1;
+        else ZeroOut = 1'b0;
     end
+
+    assign ALUOut = tmp;
 endmodule
 
 module mulDiv(clk, rst_n, valid, ready, in_A, in_B, out);
@@ -577,11 +588,11 @@ module mulDiv(clk, rst_n, valid, ready, in_A, in_B, out);
     reg  [32:0] alu_out;
       
     // Todo: Instatiate any primitives if needed
-    reg  [ 0:0] msb;
+    //reg  [ 0:0] msb;
 
     // Todo 5: Wire assignments    
-    assign ready = (state == OUT) ;
-    assign out = shreg ;
+    assign ready = (state == OUT)? 1:0;
+    assign out = shreg_nxt;
 
     // Combinational always block
     // Todo 1: Next-state logic of state machine
@@ -596,10 +607,10 @@ module mulDiv(clk, rst_n, valid, ready, in_A, in_B, out);
                 end
             end
             MUL :begin
-                if(counter_nxt == 31)
-                    state_nxt = OUT;
-                else 
+                if (counter != 31)
                     state_nxt = MUL;
+                else
+                    state_nxt = OUT;
             end
             OUT : state_nxt = IDLE;
             default :state_nxt = IDLE;
@@ -610,10 +621,10 @@ module mulDiv(clk, rst_n, valid, ready, in_A, in_B, out);
     always @(*) begin        
         case(state)
             MUL: begin
-                counter = counter_nxt + 1 ;              
+                counter_nxt = counter + 1 ;              
             end
             default :begin
-                counter = 5'b0;
+                counter_nxt = 0;
             end 
         endcase        
     end
@@ -625,7 +636,7 @@ module mulDiv(clk, rst_n, valid, ready, in_A, in_B, out);
                 if (valid) alu_in_nxt = in_B;
                 else       alu_in_nxt = 0;
             end
-            OUT : alu_in_nxt = 0;
+            OUT : alu_in_nxt = alu_in;
             default: alu_in_nxt = alu_in;
         endcase
     end
@@ -633,17 +644,17 @@ module mulDiv(clk, rst_n, valid, ready, in_A, in_B, out);
     // Todo 3: ALU output
     always @(*) begin
         case(state)
+            IDLE: alu_out = alu_in;
             MUL : begin
-                msb = shreg_nxt[0];
-                if(msb)begin
-                    alu_out = alu_in + shreg_nxt[63 : 32];
-                end
-                else begin
-                    alu_out = {1'b0, shreg_nxt[63 : 32]};
-                end    
+                if(shreg[0] == 0)
+                    alu_out = shreg[63:32];
+                else if (shreg[0] == 1)
+                    alu_out = shreg[63:32] + alu_in; 
+                else 
+                    alu_out = 0;
             end
+            OUT : alu_out = 0;
             default :begin
-                msb = 1'b0;
                 alu_out = alu_in;
             end
         endcase
@@ -651,15 +662,17 @@ module mulDiv(clk, rst_n, valid, ready, in_A, in_B, out);
     
     // Todo 4: Shift register
     always @(*) begin
-        alu_in = alu_in_nxt ;
         case(state)
-            MUL : begin
-                shreg = {alu_out, shreg_nxt[31 : 1]};
-            end           
-            OUT :begin
-                shreg = shreg_nxt ;
+            IDLE: begin
+                if(valid == 1)begin
+                    shreg_nxt = {32'b0,in_A};
+                end
+                else 
+                    shreg_nxt = 0;
             end
-            default :shreg = 64'b0;
+            MUL : shreg_nxt = ({alu_out,shreg[31:0]} >> 1);
+            OUT: shreg_nxt = shreg ;
+            default :shreg_nxt = 0;
         endcase
     end
 
@@ -670,26 +683,9 @@ module mulDiv(clk, rst_n, valid, ready, in_A, in_B, out);
         end
         else begin
             state <= state_nxt;
-            case(state)
-                IDLE :begin
-                    counter_nxt <= counter ;
-                    if (valid) begin
-                        shreg_nxt <= {32'b0, in_A};
-                    end
-                    else begin
-                        shreg_nxt <= 64'b0;     
-                    end
-                end
-                MUL :begin
-                    counter_nxt <= counter ;
-                    shreg_nxt <= shreg ;
-                end  
-                default : begin
-                    counter_nxt <= counter ;
-                    shreg_nxt <= shreg_nxt ;
-                end
-            endcase
-            
+            counter <= counter_nxt;
+            shreg <= shreg_nxt;
+            alu_in <= alu_in_nxt;
         end
     end   
 endmodule
@@ -699,7 +695,7 @@ module AND(InputOne, InputTwo, Outcome);
     input InputTwo;
     output Outcome;
     reg Outcome;
-    always @(InputOne or InputTwo) 
+    always @(*) 
     begin
         Outcome = (InputOne && InputTwo) ;
     end
