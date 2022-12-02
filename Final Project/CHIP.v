@@ -71,9 +71,12 @@ module CHIP(clk,
     wire [31:0] DataRead;
     
     assign mem_addr_I = PC;
+    assign mem_wen_D = MemWrite;
     assign rs1 = mem_rdata_I[19:15];
     assign rs2 = mem_rdata_I[24:20];
     assign rd = mem_rdata_I[11:7];
+    // BEQ
+    assign doBranch = (Branch && ZeroOut)? 1'b1:1'b0;
     //==== Submodule Connection ===================
     //---------------------------------------//
     // Do not modify this part!!!            //
@@ -99,7 +102,7 @@ module CHIP(clk,
     PC_ADDER x1imm(.DataOne(rs1_data), .DataTwo(immediate), .Outcome(x1PlusImm));
     // Control
     CONTROL Control(.Opcode(mem_rdata_I[6:0]), .Branch(Branch), .MemRead(MemRead), .MemtoReg(MemtoReg), .ALUOp(ALUOp), .MemWrite(MemWrite), .ALUSrc(ALUSrc), .regWrite(regWrite));
-    assign mem_wen_D = MemWrite;
+    
     // EX
     // ALU control
     ALUControl ALUControl(.ALUOp(ALUOp), .Instruction(mem_rdata_I), .ALUMode(ALUMode),.doMul(doMul));
@@ -107,11 +110,12 @@ module CHIP(clk,
     ALU ALU(.InputOne(rs1_data), .InputTwo(InputTwo), .Mode(ALUMode), .ALUOut(ALUOut), .ZeroOut(ZeroOut));
     mulDiv mulDiv(.clk(clk), .rst_n(rst_n), .valid(doMul), .ready(mulReady), .in_A(rs1_data), .in_B(rs2_data), .out(MULOut));
     MUX aluOutDetermine(.OptionOne(ALUOut), .OptionTwo(MULOut[31:0]), .SelectWire(doMul), .Outcome(Final));  // doMul 0: ALUOut, 1: MULOut
-
-    // BEQ
-    //AND branchDetect(.InputOne(Branch), .InputTwo(ZeroOut), .Outcome(doBranch));
-    assign doBranch = (Branch && ZeroOut)? 1'b1:1'b0;
-    
+    // ME
+    MUX PostALU(.OptionOne(0), .OptionTwo(rs2_data), .SelectWire(MemWrite), .Outcome(mem_wdata_D));     // MemWrite 0: dont write, 1: new memory data
+    MUX DataAddr(.OptionOne(0), .OptionTwo(Final), .SelectWire(MemWrite||MemRead), .Outcome(mem_addr_D));   // MemWrite 0: dont write, 1: new memory address
+    MUX ReadData(.OptionOne(0), .OptionTwo(mem_rdata_D), .SelectWire(MemRead), .Outcome(DataRead));// MemRead 0: don't read, 1: read data from mem
+    // WB
+    MUX2 WB(.OptionOne(Final), .OptionTwo(DataRead),.OptionThree(pcPlus4),.OptionFour(pcPlusImm),.SelectWire(MemtoReg), .Outcome(rd_data));   // MemtoReg 0:final output, 1: read mem,2:pcPlus4 ,3:pcPlusImm
 
     //==== Combinational Part =====================
     // Todo: any combinational/sequential circuit
@@ -152,15 +156,6 @@ module CHIP(clk,
             end
         end 
     end
-
-    // ME
-    MUX PostALU(.OptionOne(0), .OptionTwo(rs2_data), .SelectWire(MemWrite), .Outcome(mem_wdata_D));     // MemWrite 0: dont write, 1: new memory data
-    MUX DataAddr(.OptionOne(0), .OptionTwo(Final), .SelectWire(MemWrite||MemRead), .Outcome(mem_addr_D));   // MemWrite 0: dont write, 1: new memory address
-    MUX ReadData(.OptionOne(0), .OptionTwo(mem_rdata_D), .SelectWire(MemRead), .Outcome(DataRead));// MemRead 0: don't read, 1: read data from mem
-    // WB
-    MUX2 WB(.OptionOne(Final), .OptionTwo(DataRead),.OptionThree(pcPlus4),.OptionFour(pcPlusImm),.SelectWire(MemtoReg), .Outcome(rd_data));   // MemtoReg 0:final output, 1: read mem,2:pcPlus4 ,3:pcPlusImm
-
-
     //==== Sequential Part ========================
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
