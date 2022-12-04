@@ -69,7 +69,11 @@ module CHIP(clk,
     wire doBranch;
     // ReadData
     wire [31:0] DataRead;
+    // bonus bge, srai, slli
+    wire doBGE;
+    wire BGEOut;
     
+
     assign mem_addr_I = PC;
     assign mem_wen_D = MemWrite;
     assign rs1 = mem_rdata_I[19:15];
@@ -77,6 +81,10 @@ module CHIP(clk,
     assign rd = mem_rdata_I[11:7];
     // BEQ
     assign doBranch = (Branch && ZeroOut)? 1'b1:1'b0;
+    // BGE
+    assign doBGE = (Branch && BGEOut)? 1'b1:1'b0;
+    
+
     //==== Submodule Connection ===================
     //---------------------------------------//
     // Do not modify this part!!!            //
@@ -107,7 +115,7 @@ module CHIP(clk,
     // ALU control
     ALUControl ALUControl(.ALUOp(ALUOp), .Instruction(mem_rdata_I), .ALUMode(ALUMode),.doMul(doMul));
     MUX aluInput(.OptionOne(rs2_data), .OptionTwo(immediate), .SelectWire(ALUSrc), .Outcome(InputTwo));     //ALUSrc 0: rs2_data, 1: immediate
-    ALU ALU(.InputOne(rs1_data), .InputTwo(InputTwo), .Mode(ALUMode), .ALUOut(ALUOut), .ZeroOut(ZeroOut));
+    ALU ALU(.InputOne(rs1_data), .InputTwo(InputTwo), .Mode(ALUMode), .ALUOut(ALUOut), .ZeroOut(ZeroOut), .BGEOut(BGEOut));
     mulDiv mulDiv(.clk(clk), .rst_n(rst_n), .valid(doMul), .ready(mulReady), .in_A(rs1_data), .in_B(rs2_data), .out(MULOut));
     MUX aluOutDetermine(.OptionOne(ALUOut), .OptionTwo(MULOut[31:0]), .SelectWire(doMul), .Outcome(Final));  // doMul 0: ALUOut, 1: MULOut
     // ME
@@ -135,9 +143,9 @@ module CHIP(clk,
             if (pcNextState == 2'd0)begin
                 PC_nxt = pcPlus4;
             end
-            // might be BEQ
+            // might be BEQ or BGE
             else if(pcNextState == 2'd1)begin
-                if (doBranch == 1'b1) begin
+                if (doBranch == 1'b1 || doBGE == 1'b1) begin
                     PC_nxt = pcPlusImm;
                 end
                 else begin
@@ -178,13 +186,13 @@ module PC_ADDER(DataOne, DataTwo, Outcome);
     end
 endmodule
 
-module CONTROL(Opcode, Branch, MemRead, MemtoReg, ALUOp, MemWrite, ALUSrc, regWrite);
+module CONTROL(Opcode, Branch, BranchGE,MemRead, MemtoReg, ALUOp, MemWrite, ALUSrc, regWrite);
     input [6:0] Opcode;
-    output Branch, MemRead, MemWrite, ALUSrc, regWrite;
+    output Branch, BranchGE,MemRead, MemWrite, ALUSrc, regWrite;
     output [1:0] ALUOp,MemtoReg;
-    reg Branch, MemRead, MemWrite, ALUSrc, regWrite;
+    reg Branch, BranchGE, MemRead, MemWrite, ALUSrc, regWrite;
     reg [1:0] ALUOp,MemtoReg;
-    // ALUOp -> 00: auipc/sw/lw/J-type, 01: beq, 10: R-type, 11: addi/slti
+    // ALUOp -> 00: auipc/sw/lw/J-type, 01: beq & bge, 10: R-type, 11: addi/slti
     // ALUSrc -> 0: reg, 1: immediate
     // MemtoReg -> 00:aluout, 01:read_data, 10:pc+4, 11:pc+imm
     always@(*) begin
@@ -220,7 +228,7 @@ module CONTROL(Opcode, Branch, MemRead, MemtoReg, ALUOp, MemWrite, ALUSrc, regWr
                 ALUSrc = 1;
                 regWrite = 1;       // rd 存 pc+4 
             end
-            // BEQ
+            // BEQ && BGE
             7'b1100011: begin
                 Branch = 1;
                 MemRead = 0;
@@ -250,7 +258,7 @@ module CONTROL(Opcode, Branch, MemRead, MemtoReg, ALUOp, MemWrite, ALUSrc, regWr
                 ALUSrc = 1;
                 regWrite = 0;
             end
-            // ADDI & SLTI
+            // ADDI & SLTI & SLLI
             7'b0010011: begin
                 Branch = 0;
                 MemRead = 0;
@@ -270,6 +278,7 @@ module CONTROL(Opcode, Branch, MemRead, MemtoReg, ALUOp, MemWrite, ALUSrc, regWr
                 ALUSrc = 0;
                 regWrite = 1;
             end
+            //
             default: begin
                 Branch = 0;
                 MemRead = 0;
@@ -440,6 +449,39 @@ module IMM_GEN(Instruction, Immediate, pcNextState);
             Immediate[31:0] = 32'b00000000000000000000000000000000;
             pcNextState = 2'd0;
         end
+
+        // ----------------------------BONUS--------------------------------
+
+        // BGE -> check opcode and funct3
+        else if(Instruction[6:0] == 7'b1100011 && Instruction[14:12] == 3'b101) begin
+            Immediate[0] = 1'b0;
+            Immediate[4:1] = Instruction[11:8];
+            Immediate[10:5] = Instruction[30:25];
+            Immediate[11] = Instruction[7];
+            Immediate[12] = Instruction[31];
+            //signed extension
+            if(Immediate[12] == 1'b1) begin
+                Immediate[31:13] = 19'b1111111111111111111;
+            end
+            else if(Immediate[12] == 1'b0)begin
+                Immediate[31:13] = 19'b0000000000000000000;
+            end
+            pcNextState = 2'd1;
+        end
+        //SLLI unsigned shift
+        else if(Instruction[6:0] == 7'b0010011 && Instruction[14:12] == 3'b001) begin
+            Immediate[4:0] = Instruction[24:20] ;
+            //because shamt is unsigned so we do not need signed extension
+            Immediate[31:5] = 27'b000000000000000000000000000;
+            pcNextState = 2'd0;
+        end
+        //SRAI unsigned shift
+        else if(Instruction[6:0] == 7'b0010011 && Instruction[14:12] == 3'b101) begin
+            Immediate[4:0] = Instruction[24:20] ;
+            //because shamt is unsigned so we do not need signed extension
+            Immediate[31:5] = 27'b000000000000000000000000000;
+            pcNextState = 2'd0;
+        end
         else begin
             Immediate[31:0] = 32'b00000000000000000000000000000000;
             pcNextState = 2'd0;
@@ -448,8 +490,8 @@ module IMM_GEN(Instruction, Immediate, pcNextState);
 endmodule
 
 module ALUControl(ALUOp, Instruction, ALUMode, doMul);  //depend on Control's wire ALUOp 
-    // ALUOp -> 00: auipc/sw/lw/J-type, 01: beq, 10: R-type, 11: addi/slti
-    // ALUMode -> 0: add, 1: sub, 2: mul, 3: xor, 4:slti
+    // ALUOp -> 00: auipc/sw/lw/J-type, 01: beq, 10: R-type, 11: addi/slti/slli/srai
+    // ALUMode -> 0: add, 1: sub, 2: mul, 3: xor, 4:slti, 5: slli, 6:srai
     input [1:0] ALUOp;
     input [31:0] Instruction;
     output [2:0] ALUMode; 
@@ -483,6 +525,8 @@ module ALUControl(ALUOp, Instruction, ALUMode, doMul);  //depend on Control's wi
                 case(Instruction[14:12])
                     3'b000: ALUMode = 0;// ADDI
                     3'b010: ALUMode = 4;// SLTI
+                    3'b001: ALUMode = 5;// SLLI
+                    3'b101: ALUMode = 6;// SRAI
                     default: ALUMode = 0;
                 endcase
             end
@@ -527,35 +571,51 @@ module MUX2(OptionOne, OptionTwo,OptionThree,OptionFour,SelectWire, Outcome);
     end
 endmodule
 
-module ALU(InputOne, InputTwo, Mode, ALUOut, ZeroOut);
+module ALU(InputOne, InputTwo, Mode, ALUOut, ZeroOut, BGEOut);
     input [31:0] InputOne;
     input [31:0] InputTwo;
     input [2:0] Mode;
     output ZeroOut; // for BEQ
+    output BGEOut; // for BGE
     output [31:0] ALUOut;
     
     reg ZeroOut;
+    reg BGEOut;
     reg [31:0] tmp;
+    reg signbit;
+    integer i ;
 
     parameter ADD = 3'd0;
     parameter SUB = 3'd1;
     parameter MUL  = 3'd2;
     parameter XOR  = 3'd3;
     parameter SLTI  = 3'd4;
+    parameter SLLI  = 3'd5;
+    parameter SRAI  = 3'd6;
 
     always @(*) begin
+        signbit = InputOne[31]; // first record the sign of InputOne
         case(Mode)
             ADD: tmp = InputOne + InputTwo;
             SUB: tmp = InputOne - InputTwo;
             XOR: tmp = InputOne ^ InputTwo;
             SLTI: begin
-                if( $signed(InputOne) < $signed(InputTwo)) tmp = 32'h00000001;
-                else tmp= 32'h00000000;
+                if( $signed(InputOne) < $signed(InputTwo)) tmp = 32'h00000001;  // less
+                else if($signed(InputOne)  == $signed(InputTwo)) tmp= 32'h00000000;  // equal
+                else tmp= 32'h00000002; // greater
             end
+            SLLI: tmp = InputOne << InputTwo;
+            
             default: tmp = 32'h00000000;
         endcase
+
+        // BEQ 
         if(tmp == 32'h00000000) ZeroOut = 1'b1;
         else ZeroOut = 1'b0;
+
+        // BGE
+        if(tmp == 32'h00000002) BGEOut = 1'b1;
+        else BGEOut = 1'b0;
     end
 
     assign ALUOut = tmp;
