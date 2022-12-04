@@ -186,11 +186,11 @@ module PC_ADDER(DataOne, DataTwo, Outcome);
     end
 endmodule
 
-module CONTROL(Opcode, Branch, BranchGE,MemRead, MemtoReg, ALUOp, MemWrite, ALUSrc, regWrite);
+module CONTROL(Opcode, Branch,MemRead, MemtoReg, ALUOp, MemWrite, ALUSrc, regWrite);
     input [6:0] Opcode;
-    output Branch, BranchGE,MemRead, MemWrite, ALUSrc, regWrite;
+    output Branch,MemRead, MemWrite, ALUSrc, regWrite;
     output [1:0] ALUOp,MemtoReg;
-    reg Branch, BranchGE, MemRead, MemWrite, ALUSrc, regWrite;
+    reg Branch, MemRead, MemWrite, ALUSrc, regWrite;
     reg [1:0] ALUOp,MemtoReg;
     // ALUOp -> 00: auipc/sw/lw/J-type, 01: beq & bge, 10: R-type, 11: addi/slti
     // ALUSrc -> 0: reg, 1: immediate
@@ -258,7 +258,7 @@ module CONTROL(Opcode, Branch, BranchGE,MemRead, MemtoReg, ALUOp, MemWrite, ALUS
                 ALUSrc = 1;
                 regWrite = 0;
             end
-            // ADDI & SLTI & SLLI
+            // ADDI & SLTI & SLLI & SRLI
             7'b0010011: begin
                 Branch = 0;
                 MemRead = 0;
@@ -475,7 +475,7 @@ module IMM_GEN(Instruction, Immediate, pcNextState);
             Immediate[31:5] = 27'b000000000000000000000000000;
             pcNextState = 2'd0;
         end
-        //SRAI unsigned shift
+        //SRAI SRLI unsigned shift
         else if(Instruction[6:0] == 7'b0010011 && Instruction[14:12] == 3'b101) begin
             Immediate[4:0] = Instruction[24:20] ;
             //because shamt is unsigned so we do not need signed extension
@@ -504,7 +504,17 @@ module ALUControl(ALUOp, Instruction, ALUMode, doMul);  //depend on Control's wi
                 ALUMode = 0; //auipc/sw/lw/J-type
             end
             2'b01:begin
-                ALUMode = 1; //beq:sub
+                case(Instruction[14:12])
+                    //beq
+                    3'b000: begin
+                        ALUMode = 1;//sub
+                    end
+                    //bge
+                    3'b101:begin
+                        ALUMode = 6; // BGE
+                    end
+                    default: ALUMode = 0;
+                endcase
             end
             2'b10:begin
                 case(Instruction[14:12])
@@ -526,7 +536,11 @@ module ALUControl(ALUOp, Instruction, ALUMode, doMul);  //depend on Control's wi
                     3'b000: ALUMode = 0;// ADDI
                     3'b010: ALUMode = 4;// SLTI
                     3'b001: ALUMode = 5;// SLLI
-                    3'b101: ALUMode = 6;// SRAI
+                    3'b101: begin
+                        if(Instruction[31:25]==7'b0100000) ALUMode = 6;// SRAI
+                        else if(Instruction[31:25]==7'b0000000) ALUMode = 7;// SRLI
+                        else ALUMode = 0;
+                    end
                     default: ALUMode = 0;
                 endcase
             end
@@ -582,7 +596,7 @@ module ALU(InputOne, InputTwo, Mode, ALUOut, ZeroOut, BGEOut);
     reg ZeroOut;
     reg BGEOut;
     reg [31:0] tmp;
-    reg signbit;
+    //reg signbit;
     integer i ;
 
     parameter ADD = 3'd0;
@@ -591,31 +605,42 @@ module ALU(InputOne, InputTwo, Mode, ALUOut, ZeroOut, BGEOut);
     parameter XOR  = 3'd3;
     parameter SLTI  = 3'd4;
     parameter SLLI  = 3'd5;
-    parameter SRAI  = 3'd6;
+    parameter BGE  = 3'd6;
+    parameter SRLI  = 3'd7;
 
     always @(*) begin
-        signbit = InputOne[31]; // first record the sign of InputOne
+        //signbit = InputTwo[31]; // first record the sign of InputOne
         case(Mode)
             ADD: tmp = InputOne + InputTwo;
-            SUB: tmp = InputOne - InputTwo;
+            SUB: tmp = $signed(InputOne) - $signed(InputTwo);
             XOR: tmp = InputOne ^ InputTwo;
             SLTI: begin
                 if( $signed(InputOne) < $signed(InputTwo)) tmp = 32'h00000001;  // less
-                else if($signed(InputOne)  == $signed(InputTwo)) tmp= 32'h00000000;  // equal
-                else tmp= 32'h00000002; // greater
+                else tmp= 32'h00000000;  
             end
-            SLLI: tmp = InputOne << InputTwo;
-            
+            BGE:  begin
+                if (InputOne >= InputTwo) begin
+                    tmp = 32'h00000000;
+                end
+                else begin
+                    tmp = 32'h00000001;
+                end
+            end 
+            SLLI: tmp = InputOne << $unsigned(InputTwo);
+            SRLI: tmp = InputOne >> $unsigned(InputTwo);
             default: tmp = 32'h00000000;
         endcase
 
-        // BEQ 
-        if(tmp == 32'h00000000) ZeroOut = 1'b1;
-        else ZeroOut = 1'b0;
+        // BEQ BGE
+        if(tmp == 32'h00000000) begin
+            ZeroOut = 1'b1;
+            BGEOut = 1'b1;
+        end
+        else begin
+            ZeroOut = 1'b0;
+            BGEOut = 1'b0;
+        end
 
-        // BGE
-        if(tmp == 32'h00000002) BGEOut = 1'b1;
-        else BGEOut = 1'b0;
     end
 
     assign ALUOut = tmp;
@@ -755,3 +780,4 @@ module AND(InputOne, InputTwo, Outcome);
         Outcome = (InputOne && InputTwo) ;
     end
 endmodule
+
